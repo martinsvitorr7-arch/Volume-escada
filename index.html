@@ -247,7 +247,7 @@ const ui={panel:null,confirm:null,note:''};
 function mkEx(name,muscle,type,sets,reps,load){
   const base={sets:sets,reps:reps,load:load,backoff:0};
   return {id:uid(),name:name,muscle:muscle,type:type,tag:'',extra:0,
-    sec:defSec(type,muscle),ss:'',
+    sec:defSec(type,muscle),sec2:'',ss:'',
     w:[0,1,2,3].map(()=>Object.assign({},base))};
 }
 function ladder(e){
@@ -304,9 +304,10 @@ function normEx(e){
   else if(typeof e.indirect==='boolean')sec=e.indirect?(INDIRECT[muscle]||''):'';
   else sec=defSec(type,muscle);
   const ss=SSL.indexOf(e.ss)>=0?e.ss:'';
+  const sec2=MUSCLES.indexOf(e.sec2)>=0?e.sec2:'';
   return {id:cleanId(e.id),name:String(e.name==null?'':e.name).slice(0,80),muscle:muscle,type:type,
     tag:tag,extra:(e.extra==null||e.extra==='')?(TECH_EXTRA[tag]||0):e.extra,
-    sec:sec,ss:ss,w:w};
+    sec:sec,sec2:sec2,ss:ss,w:w};
 }
 function normalize(o){
   if(!o||!Array.isArray(o.days))throw new Error('formato inesperado');
@@ -446,6 +447,7 @@ function card(e,i,n){
   const to=TYPES.map(x=>opt(x[0],x[1],x[0]===e.type)).join('');
   const go=TAGS.map(x=>opt(x,x||'Nenhuma',x===e.tag)).join('');
   const so=opt('','Nenhum',e.sec==='')+MUSCLES.map(m=>opt(m,m,m===e.sec)).join('');
+  const so2=opt('','Nenhum',!e.sec2)+MUSCLES.map(m=>opt(m,m,m===e.sec2)).join('');
   const sso=SSL.map(x=>opt(x,x?'Super set '+x:'Nenhum',x===e.ss)).join('');
   return '<article class="ex'+(e.ss?' ss':'')+'" data-ex="'+id+'">'+
     (e.ss?'<p class="ssbadge">Super set '+esc(e.ss)+'</p>':'')+
@@ -455,8 +457,9 @@ function card(e,i,n){
     '<button type="button" class="icon danger" data-act="rmex" aria-label="Excluir exercício">'+ICON.del+'</button></div></div>'+
     '<div class="row2"><div class="field"><label for="m-'+id+'">Músculo alvo</label><select id="m-'+id+'" data-f="muscle">'+mo+'</select></div>'+
     '<div class="field"><label for="t-'+id+'">Tipo</label><select id="t-'+id+'" data-f="type">'+to+'</select></div></div>'+
-    '<div class="row2"><div class="field"><label for="sc-'+id+'">Músculo secundário / indireto</label><select id="sc-'+id+'" data-f="sec">'+so+'</select></div>'+
-    '<div class="field"><label for="ss-'+id+'">Super set</label><select id="ss-'+id+'" data-f="ss">'+sso+'</select></div></div>'+
+    '<div class="row2"><div class="field"><label for="s2-'+id+'">Músculo secundário</label><select id="s2-'+id+'" data-f="sec2">'+so2+'</select></div>'+
+    '<div class="field"><label for="sc-'+id+'">Músculo indireto (0,5 série)</label><select id="sc-'+id+'" data-f="sec">'+so+'</select></div></div>'+
+    '<div class="field"><label for="ss-'+id+'">Super set</label><select id="ss-'+id+'" data-f="ss">'+sso+'</select></div>'+
     '<div class="row4">'+
     '<div class="field"><label for="s-'+id+'">Séries</label><input id="s-'+id+'" data-w="sets" type="number" inputmode="numeric" min="0" step="1" value="'+esc(w.sets)+'"></div>'+
     '<div class="field"><label for="r-'+id+'">Reps</label><input id="r-'+id+'" data-w="reps" type="text" maxlength="12" placeholder="8-12" value="'+esc(w.reps)+'"></div>'+
@@ -472,7 +475,7 @@ function renderEditor(){
   if(!d.ex.length){
     h='<div class="empty"><p>Este dia ainda não tem exercícios.</p><button type="button" class="btn primary" data-act="addex">Adicionar exercício</button></div>';
   }else{
-    h='<p class="hint">Super set: exercícios do mesmo dia com a mesma letra são feitos em sequência, sem descanso entre eles. O músculo secundário soma 0,5 série para cada série do exercício.</p>'+
+    h='<p class="hint">Super set: exercícios do mesmo dia com a mesma letra são feitos em sequência, sem descanso entre eles. O músculo indireto soma 0,5 série para cada série do exercício. O músculo secundário fica registrado na ficha e no resumo, mas não entra na conta do volume.</p>'+
       d.ex.map((e,i)=>card(e,i,d.ex.length)).join('')+'<button type="button" class="btn addex" data-act="addex">+ Adicionar exercício</button>';
   }
   $('#editor').innerHTML=h;
@@ -528,7 +531,7 @@ function summaryText(){
   state.days.forEach(d=>{
     L.push(d.name.toUpperCase()+((d.freq||1)>1?' (×'+d.freq+' por semana)':''));
     if(!d.ex.length)L.push('  (sem exercícios)');
-    d.ex.forEach(e=>L.push('  - '+(e.name||'Exercício')+' ['+e.muscle+(e.sec?' + '+e.sec:'')+']: '+line(e,wk)));
+    d.ex.forEach(e=>L.push('  - '+(e.name||'Exercício')+' ['+e.muscle+(e.sec2?' + '+e.sec2+' (secundário)':'')+(e.sec?' | indireto: '+e.sec:'')+']: '+line(e,wk)));
     L.push('');
   });
   L.push('Volume semanal (séries diretas + indiretas):');
@@ -703,6 +706,9 @@ editor.addEventListener('change',ev=>{
     afterEdit(e,cardEl);
   }else if(f==='sec'){
     e.sec=t.value;
+    afterEdit(e,cardEl);
+  }else if(f==='sec2'){
+    e.sec2=t.value;
     afterEdit(e,cardEl);
   }else if(f==='ss'){
     e.ss=t.value;
