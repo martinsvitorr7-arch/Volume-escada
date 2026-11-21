@@ -164,7 +164,7 @@ body{margin:0}
 
   <section class="setup">
     <div class="field"><label for="fichaName">Nome da ficha</label><input id="fichaName" type="text" maxlength="60" placeholder="Minha ficha"></div>
-    <div class="field"><label for="splitSel">Divisão de treino</label><select id="splitSel"></select></div>
+    <div class="field"><label for="splitSel">Divisão de treino (desta semana)</label><select id="splitSel"></select></div>
   </section>
 
   <div id="confirm" class="confirm" role="status" hidden></div>
@@ -207,7 +207,7 @@ const MUSCLES=['Peito','Latíssimo','Upper Back','Ombro','Anterior de ombro','Po
 /* Partes do ombro: o painel de volume mostra "Ombro (todos)" somando as três partes (+ "Ombro (geral)", se houver) */
 const SHOULDER_PARTS=['Anterior de ombro','Posterior de ombro','Lateral de ombro'];
 const mlabel=m=>m==='Ombro'?'Ombro (geral)':m;
-/* Sugestão automática de músculo secundário (só para multiarticulares); dá para trocar em cada exercício */
+/* Sugestão automática de músculo indireto 1 (só para multiarticulares); dá para trocar em cada exercício */
 const INDIRECT={'Peito':'Tríceps','Ombro':'Tríceps','Anterior de ombro':'Tríceps','Latíssimo':'Bíceps','Upper Back':'Bíceps'};
 const defSec=(type,m)=>(type==='multi'&&INDIRECT[m])||'';
 /* Letras disponíveis para agrupar exercícios em super set (dentro do mesmo dia) */
@@ -218,10 +218,10 @@ const TECH_EXTRA={'Série reta':0,'Backoff set':0,'Rest-pause':1,'Muscle round':
 const TYPES=[['multi','Multiarticular pesado'],['mono','Monoarticular / máquina estável']];
 const BACKOFF=0.7;
 const WEEKS=[
-  {name:'Semana 1',tag:'Base',hint:'Base. Monte a ficha aqui: exercícios, séries, repetições e cargas.'},
-  {name:'Semana 2',tag:'Escada 1',hint:'Escada 1. Os multiarticulares ganham +1 série em relação à base.'},
-  {name:'Semana 3',tag:'Escada 2 · ápice',hint:'Escada 2, ápice. Os monoarticulares ganham 1 backoff set: 30% menos carga e 30 s de descanso.'},
-  {name:'Remediação',tag:'Deload',hint:'Deload. Séries e cargas voltam à base da Semana 1.'}
+  {name:'Semana 1',tag:'Base',hint:'Base. Monte a ficha aqui: dias, exercícios, séries, repetições e cargas.'},
+  {name:'Semana 2',tag:'Escada 1',hint:'Escada 1. Na escada automática, os multiarticulares ganham +1 série em relação à base.'},
+  {name:'Semana 3',tag:'Escada 2 · ápice',hint:'Escada 2, ápice. Na escada automática, os monoarticulares ganham 1 backoff set: 30% menos carga e 30 s de descanso.'},
+  {name:'Remediação',tag:'Deload',hint:'Deload. Na escada automática, séries e cargas voltam à base da Semana 1.'}
 ];
 const SPLITS={
   ab:{label:'A/B',days:['Dia A','Dia B']},
@@ -231,6 +231,7 @@ const SPLITS={
   torso:{label:'Torso / Membros',days:['Torso','Membros']},
   ul:{label:'Superior / Inferior',days:['Superior','Inferior']}
 };
+const NOTE_DEFAULT='Cada semana tem seus próprios dias e exercícios: o que você muda aqui não altera as outras.';
 
 const $=(s,r)=>(r||document).querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -245,27 +246,33 @@ const ICON={
   del:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>'
 };
 
+/* Estado: state.weeks[0..3], cada semana com {split, active, days:[{id,name,freq,ex:[...]}]}.
+   Os exercícios guardam séries, reps, carga e backoff diretamente: nada é compartilhado entre semanas. */
 let state;
 const ui={panel:null,confirm:null,note:''};
 
 /* ---------- Dados ---------- */
 function mkEx(name,muscle,type,sets,reps,load){
-  const base={sets:sets,reps:reps,load:load,backoff:0};
   return {id:uid(),name:name,muscle:muscle,type:type,tag:'',extra:0,
     sec:defSec(type,muscle),sec2:'',ind2:'',ss:'',
-    w:[0,1,2,3].map(()=>Object.assign({},base))};
+    sets:sets,reps:reps,load:load,backoff:0};
 }
-function ladder(e){
-  const b=e.w[0];
-  const w1=Object.assign({},b);
-  if(e.type==='multi')w1.sets=num(b.sets)+1;
-  const w2=Object.assign({},w1);
-  if(e.type==='mono')w2.backoff=Math.max(1,num(b.backoff));
-  e.w[1]=w1;e.w[2]=w2;e.w[3]=Object.assign({},b);
+function cloneDays(days){
+  return JSON.parse(JSON.stringify(days)).map(d=>{d.id=uid();d.ex.forEach(e=>{e.id=uid();});return d;});
 }
+/* Escada automática a partir da base (Semana 1): wk = 1, 2 ou 3 */
+function ladderDays(base,wk){
+  const days=cloneDays(base);
+  days.forEach(d=>d.ex.forEach(e=>{
+    if((wk===1||wk===2)&&e.type==='multi')e.sets=num(e.sets)+1;
+    if(wk===2&&e.type==='mono')e.backoff=Math.max(1,num(e.backoff));
+  }));
+  return days;
+}
+function mkWeek(days,split){return {split:split,active:days[0].id,days:days};}
 function seed(){
   const D=(name,list)=>({id:uid(),name:name,freq:2,ex:list});
-  const s={v:1,name:'Minha ficha',split:'ppl',week:0,example:true,days:[
+  const base=[
     D('Push',[
       mkEx('Supino reto com barra','Peito','multi',3,'5-9',60),
       mkEx('Desenvolvimento com halteres','Anterior de ombro','multi',3,'6-10',20),
@@ -288,22 +295,20 @@ function seed(){
       mkEx('Panturrilha em pé','Panturrilha','mono',4,'10-15',60),
       mkEx('Abdominal na polia','Abs','mono',3,'10-15',30)
     ])
-  ]};
-  s.days.forEach(d=>d.ex.forEach(ladder));
-  s.active=s.days[0].id;
+  ];
+  const s={v:2,name:'Minha ficha',week:0,example:true,weeks:[mkWeek(base,'ppl')]};
+  for(let i=1;i<4;i++)s.weeks.push(mkWeek(ladderDays(base,i),'ppl'));
   return s;
 }
-function normEx(e){
+/* wi = semana de onde ler os valores quando a ficha está no formato antigo (e.w[0..3]) */
+function normEx(e,wi){
   e=e||{};
   const muscle=MUSCLES.indexOf(e.muscle)>=0?e.muscle:'Peito';
   const type=e.type==='mono'?'mono':'multi';
   const tag=TAGS.indexOf(e.tag)>=0?e.tag:'';
   const cn=(v,d)=>(v==null||v==='')?d:v;
-  const w=[0,1,2,3].map(i=>{
-    const x=(Array.isArray(e.w)&&(e.w[i]||e.w[0]))||{};
-    return {sets:cn(x.sets,3),reps:String(cn(x.reps,'8-12')).slice(0,12),load:cn(x.load,''),backoff:cn(x.backoff,0)};
-  });
-  /* Músculo secundário: usa o campo novo; fichas antigas (campo "indirect") são convertidas */
+  const x=(Array.isArray(e.w)?(e.w[wi]||e.w[0]):e)||{};
+  /* Músculo indireto 1: usa o campo novo; fichas antigas (campo "indirect") são convertidas */
   let sec;
   if(typeof e.sec==='string'&&(e.sec===''||MUSCLES.indexOf(e.sec)>=0))sec=e.sec;
   else if(typeof e.indirect==='boolean')sec=e.indirect?(INDIRECT[muscle]||''):'';
@@ -313,20 +318,36 @@ function normEx(e){
   const ind2=MUSCLES.indexOf(e.ind2)>=0?e.ind2:'';
   return {id:cleanId(e.id),name:String(e.name==null?'':e.name).slice(0,80),muscle:muscle,type:type,
     tag:tag,extra:(e.extra==null||e.extra==='')?(TECH_EXTRA[tag]||0):e.extra,
-    sec:sec,sec2:sec2,ind2:ind2,ss:ss,w:w};
+    sec:sec,sec2:sec2,ind2:ind2,ss:ss,
+    sets:cn(x.sets,3),reps:String(cn(x.reps,'8-12')).slice(0,12),load:cn(x.load,''),backoff:cn(x.backoff,0)};
 }
-function normalize(o){
-  if(!o||!Array.isArray(o.days))throw new Error('formato inesperado');
-  const s={v:1,name:String(o.name||'Minha ficha').slice(0,60),
-    split:(SPLITS[o.split]||o.split==='custom')?o.split:'custom',days:[],week:0,active:null,example:false};
-  o.days.slice(0,7).forEach(d=>{
+function normDays(arr,wi){
+  return (Array.isArray(arr)?arr:[]).slice(0,7).map(d=>{
     d=d||{};
     const f=Math.min(7,Math.max(1,parseInt(d.freq,10)||1));
-    s.days.push({id:cleanId(d.id),name:String(d.name||'Dia').slice(0,40),freq:f,
-      ex:(Array.isArray(d.ex)?d.ex:[]).slice(0,40).map(normEx)});
+    return {id:cleanId(d.id),name:String(d.name||'Dia').slice(0,40),freq:f,
+      ex:(Array.isArray(d.ex)?d.ex:[]).slice(0,40).map(x=>normEx(x,wi))};
   });
-  if(!s.days.length)throw new Error('nenhum dia encontrado');
-  s.active=s.days[0].id;
+}
+function normalize(o){
+  if(!o||typeof o!=='object')throw new Error('formato inesperado');
+  const s={v:2,name:String(o.name||'Minha ficha').slice(0,60),week:0,example:false,weeks:[]};
+  const splitOk=k=>(SPLITS[k]||k==='custom')?k:'custom';
+  if(Array.isArray(o.weeks)&&o.weeks.length){
+    for(let i=0;i<4;i++){
+      const w=o.weeks[i]||{};
+      let days=normDays(w.days,0);
+      if(!days.length)days=[{id:uid(),name:'Dia A',freq:1,ex:[]}];
+      s.weeks.push({split:splitOk(w.split),active:days.some(d=>d.id===w.active)?w.active:days[0].id,days:days});
+    }
+  }else if(Array.isArray(o.days)){
+    /* Formato antigo (uma lista de dias para todas as semanas): cada semana vira uma cópia independente */
+    for(let i=0;i<4;i++){
+      const days=normDays(o.days,i);
+      if(!days.length)throw new Error('nenhum dia encontrado');
+      s.weeks.push({split:splitOk(o.split),active:days[0].id,days:days});
+    }
+  }else throw new Error('formato inesperado');
   return s;
 }
 function load(){
@@ -335,7 +356,6 @@ function load(){
     if(raw){
       const o=JSON.parse(raw);const s=normalize(o);
       s.week=[0,1,2,3].indexOf(o.week)>=0?o.week:0;
-      if(s.days.some(d=>d.id===o.active))s.active=o.active;
       s.example=!!o.example;
       return s;
     }
@@ -358,13 +378,14 @@ function touch(){
   if(state.example){state.example=false;renderExample();}
   save();
 }
-const activeDay=()=>state.days.find(d=>d.id===state.active)||state.days[0];
+const curWeek=()=>state.weeks[state.week];
+const activeDay=()=>{const w=curWeek();return w.days.find(d=>d.id===w.active)||w.days[0];};
 function findEx(id){
-  for(const d of state.days){const e=d.ex.find(x=>x.id===id);if(e)return e;}
+  for(const d of curWeek().days){const e=d.ex.find(x=>x.id===id);if(e)return e;}
   return null;
 }
 function findDay(id){
-  return state.days.find(d=>d.ex.some(x=>x.id===id))||null;
+  return curWeek().days.find(d=>d.ex.some(x=>x.id===id))||null;
 }
 /* Outros exercícios do mesmo dia que estão no mesmo super set */
 function partners(e){
@@ -375,9 +396,9 @@ function partners(e){
 }
 
 /* ---------- Cálculos ---------- */
-function line(e,wk){
-  const w=e.w[wk];const s=num(w.sets),bo=num(w.backoff),ld=num(w.load);
-  let t=s+' × '+(w.reps||'–');
+function line(e){
+  const s=num(e.sets),bo=num(e.backoff),ld=num(e.load);
+  let t=s+' × '+(e.reps||'–');
   if(ld)t+=' · '+fmt(ld)+' kg';
   if(bo){
     t+='  +  '+bo+' backoff';
@@ -397,10 +418,10 @@ function volume(wk){
   const dir={},ind={};
   let sets=0;
   MUSCLES.forEach(m=>{dir[m]=0;ind[m]=0;});
-  state.days.forEach(d=>{
+  state.weeks[wk].days.forEach(d=>{
     const f=d.freq||1;
     d.ex.forEach(e=>{
-      const w=e.w[wk];const n=(num(w.sets)+num(w.backoff)+num(e.extra))*f;
+      const n=(num(e.sets)+num(e.backoff)+num(e.extra))*f;
       sets+=n;
       dir[e.muscle]+=n;
       /* secundário: vale 1 série, igual ao músculo alvo */
@@ -448,9 +469,10 @@ function renderWeeks(){
 function renderWeekInfo(){
   const wk=state.week;
   let btns='<button type="button" class="btn" data-act="ladder">Gerar escada a partir da Semana 1</button>';
-  if(wk>0)btns+='<button type="button" class="btn'+(wk===3?' primary':'')+'" data-act="resetweek">Resetar para a Semana 1</button>';
+  if(wk>0)btns+='<button type="button" class="btn'+(wk===3?' primary':'')+'" data-act="resetweek">Copiar a Semana 1 para esta</button>';
+  btns+='<button type="button" class="btn danger" data-act="clearweek">Esvaziar esta semana</button>';
   $('#weekInfo').innerHTML='<div class="txt"><p>'+esc(WEEKS[wk].hint)+'</p><p class="hint">'+
-    (ui.note?esc(ui.note):'Você pode ajustar manualmente qualquer valor desta semana.')+'</p></div><div class="btns">'+btns+'</div>';
+    (ui.note?esc(ui.note):NOTE_DEFAULT)+'</p></div><div class="btns">'+btns+'</div>';
 }
 function renderExample(){$('#example').hidden=!state.example;}
 function renderConfirm(){
@@ -460,18 +482,19 @@ function renderConfirm(){
   c.innerHTML='<p>'+esc(ui.confirm.msg)+'</p><div class="btns"><button type="button" class="btn primary" data-act="cyes">Confirmar</button><button type="button" class="btn" data-act="cno">Cancelar</button></div>';
 }
 function renderDays(){
+  const w=curWeek();
   const d=activeDay();
-  const tabs=state.days.map(x=>'<button type="button" role="tab" class="dt" data-day="'+x.id+'" aria-selected="'+(x.id===d.id)+'">'+esc(x.name||'Dia')+'</button>').join('');
-  const add=state.days.length<7?'<button type="button" class="dt add" data-act="addday">+ Dia</button>':'';
+  const tabs=w.days.map(x=>'<button type="button" role="tab" class="dt" data-day="'+x.id+'" aria-selected="'+(x.id===d.id)+'">'+esc(x.name||'Dia')+'</button>').join('');
+  const add=w.days.length<7?'<button type="button" class="dt add" data-act="addday">+ Dia</button>':'';
   let fo='';
   for(let i=1;i<=Math.max(4,d.freq||1);i++)fo+=opt(i,i+'×',i===(d.freq||1));
   $('#days').innerHTML='<div class="daytabs" role="tablist" aria-label="Dias de treino">'+tabs+add+'</div>'+
     '<div class="dayhead"><div class="field grow"><label for="dayName">Nome do dia</label><input id="dayName" type="text" maxlength="40" value="'+esc(d.name)+'"></div>'+
     '<div class="field"><label for="dayFreq">Vezes por semana</label><select id="dayFreq">'+fo+'</select></div>'+
-    '<button type="button" class="btn danger" data-act="rmday"'+(state.days.length<2?' disabled':'')+'>Remover dia</button></div>';
+    '<button type="button" class="btn danger" data-act="rmday"'+(w.days.length<2?' disabled':'')+'>Remover dia</button></div>';
 }
 function card(e,i,n){
-  const w=e.w[state.week],id=e.id;
+  const id=e.id;
   const mo=MUSCLES.map(m=>opt(m,mlabel(m),m===e.muscle)).join('');
   const to=TYPES.map(x=>opt(x[0],x[1],x[0]===e.type)).join('');
   const go=TAGS.map(x=>opt(x,x||'Nenhuma',x===e.tag)).join('');
@@ -492,13 +515,13 @@ function card(e,i,n){
     '<div class="row2"><div class="field"><label for="i2-'+id+'">Músculo indireto 2 (0,5 série)</label><select id="i2-'+id+'" data-f="ind2">'+so3+'</select></div>'+
     '<div class="field"><label for="ss-'+id+'">Super set</label><select id="ss-'+id+'" data-f="ss">'+sso+'</select></div></div>'+
     '<div class="row4">'+
-    '<div class="field"><label for="s-'+id+'">Séries</label><input id="s-'+id+'" data-w="sets" type="number" inputmode="numeric" min="0" step="1" value="'+esc(w.sets)+'"></div>'+
-    '<div class="field"><label for="r-'+id+'">Reps</label><input id="r-'+id+'" data-w="reps" type="text" maxlength="12" placeholder="8-12" value="'+esc(w.reps)+'"></div>'+
-    '<div class="field"><label for="l-'+id+'">Carga (kg)</label><input id="l-'+id+'" data-w="load" type="number" inputmode="decimal" min="0" step="0.5" value="'+esc(w.load)+'"></div>'+
-    '<div class="field"><label for="b-'+id+'">Backoff</label><input id="b-'+id+'" data-w="backoff" type="number" inputmode="numeric" min="0" step="1" value="'+esc(w.backoff)+'"></div></div>'+
+    '<div class="field"><label for="s-'+id+'">Séries</label><input id="s-'+id+'" data-w="sets" type="number" inputmode="numeric" min="0" step="1" value="'+esc(e.sets)+'"></div>'+
+    '<div class="field"><label for="r-'+id+'">Reps</label><input id="r-'+id+'" data-w="reps" type="text" maxlength="12" placeholder="8-12" value="'+esc(e.reps)+'"></div>'+
+    '<div class="field"><label for="l-'+id+'">Carga (kg)</label><input id="l-'+id+'" data-w="load" type="number" inputmode="decimal" min="0" step="0.5" value="'+esc(e.load)+'"></div>'+
+    '<div class="field"><label for="b-'+id+'">Backoff</label><input id="b-'+id+'" data-w="backoff" type="number" inputmode="numeric" min="0" step="1" value="'+esc(e.backoff)+'"></div></div>'+
     '<div class="row2"><div class="field"><label for="g-'+id+'">Técnica especial</label><select id="g-'+id+'" data-f="tag">'+go+'</select></div>'+
     '<div class="field"><label for="x-'+id+'">Séries extras da técnica</label><input id="x-'+id+'" data-f="extra" type="number" inputmode="numeric" min="0" step="1" value="'+esc(e.extra)+'"></div></div>'+
-    '<p class="sum" id="sum-'+id+'">'+esc(line(e,state.week))+'</p></article>';
+    '<p class="sum" id="sum-'+id+'">'+esc(line(e))+'</p></article>';
 }
 function renderEditor(){
   const d=activeDay();
@@ -550,19 +573,27 @@ function renderAll(){
 }
 function syncSetup(){
   $('#fichaName').value=state.name;
-  $('#splitSel').value=state.split;
+  $('#splitSel').value=curWeek().split;
 }
 function setIo(msg){const el=$('#ioStatus');if(el)el.textContent=msg;}
 
 /* ---------- Exportar, importar, resumo ---------- */
-function exportable(){return {app:'treino-escada',v:1,name:state.name,split:state.split,days:state.days};}
+function exportable(){return {app:'treino-escada',v:2,name:state.name,weeks:state.weeks};}
 function summaryText(){
   const wk=state.week;
   const L=[(state.name||'Minha ficha')+' · '+WEEKS[wk].name+' ('+WEEKS[wk].tag+')',''];
-  state.days.forEach(d=>{
+  state.weeks[wk].days.forEach(d=>{
     L.push(d.name.toUpperCase()+((d.freq||1)>1?' (×'+d.freq+' por semana)':''));
     if(!d.ex.length)L.push('  (sem exercícios)');
-    d.ex.forEach(e=>L.push('  - '+(e.name||'Exercício')+' ['+mlabel(e.muscle)+(e.sec2?' + '+mlabel(e.sec2)+' (secundário)':'')+([e.sec,e.ind2].filter(Boolean).length?' | indireto: '+[e.sec,e.ind2].filter(Boolean).map(mlabel).join(' + '):'')+']: '+line(e,wk)));
+    d.ex.forEach(e=>{
+      const ind=[e.sec,e.ind2].filter(Boolean);
+      const partnersTxt=e.ss?'  ·  Super set '+e.ss+(function(){
+        const p=d.ex.filter(x=>x!==e&&x.ss===e.ss).map(x=>x.name||'Exercício');
+        return p.length?' com '+p.join(' + '):' (falta outro exercício)';
+      })():'';
+      const base=line(e).split('  ·  Super set')[0];
+      L.push('  - '+(e.name||'Exercício')+' ['+mlabel(e.muscle)+(e.sec2?' + '+mlabel(e.sec2)+' (secundário)':'')+(ind.length?' | indireto: '+ind.map(mlabel).join(' + '):'')+']: '+base+partnersTxt);
+    });
     L.push('');
   });
   L.push('Volume semanal (séries diretas + indiretas):');
@@ -571,25 +602,26 @@ function summaryText(){
 }
 
 /* ---------- Divisão ---------- */
-function setSplitCustom(){state.split='custom';$('#splitSel').value='custom';}
+function setSplitCustom(){curWeek().split='custom';$('#splitSel').value='custom';}
 function applySplit(key){
-  if(!SPLITS[key]){state.split='custom';save();return;}
+  const w=curWeek();
+  if(!SPLITS[key]){w.split='custom';save();return;}
   const names=SPLITS[key].days;
-  const extra=state.days.slice(names.length);
+  const extra=w.days.slice(names.length);
   const lost=extra.reduce((a,d)=>a+d.ex.length,0);
   const go=()=>{
     names.forEach((nm,i)=>{
-      if(state.days[i])state.days[i].name=nm;
-      else state.days.push({id:uid(),name:nm,freq:1,ex:[]});
+      if(w.days[i])w.days[i].name=nm;
+      else w.days.push({id:uid(),name:nm,freq:1,ex:[]});
     });
-    state.days.length=names.length;
-    state.split=key;
-    if(!state.days.some(d=>d.id===state.active))state.active=state.days[0].id;
+    w.days.length=names.length;
+    w.split=key;
+    if(!w.days.some(d=>d.id===w.active))w.active=w.days[0].id;
     ui.confirm=null;ui.note='';
     touch();renderAll();syncSetup();
   };
   if(lost>0){
-    ui.confirm={msg:'Mudar para '+SPLITS[key].label+' remove '+extra.length+' dia(s) com '+lost+' exercício(s).',yes:go,cancel:()=>{$('#splitSel').value=state.split;}};
+    ui.confirm={msg:'Mudar para '+SPLITS[key].label+' remove '+extra.length+' dia(s) com '+lost+' exercício(s) desta semana.',yes:go,cancel:()=>{$('#splitSel').value=curWeek().split;}};
     renderConfirm();
   }else go();
 }
@@ -607,7 +639,7 @@ function refreshSums(){
   /* Atualiza o resumo de todos os exercícios do dia (o nome dos pares do super set pode ter mudado) */
   activeDay().ex.forEach(x=>{
     const s=$('#sum-'+x.id);
-    if(s)s.textContent=line(x,state.week);
+    if(s)s.textContent=line(x);
   });
 }
 function afterEdit(e,cardEl){
@@ -618,8 +650,8 @@ function afterEdit(e,cardEl){
 document.addEventListener('click',ev=>{
   const b=ev.target.closest('[data-act],[data-week],[data-day]');
   if(!b)return;
-  if(b.dataset.week!==undefined){state.week=+b.dataset.week;ui.note='';save();renderAll();return;}
-  if(b.dataset.day){state.active=b.dataset.day;ui.note='';save();renderDays();renderEditor();return;}
+  if(b.dataset.week!==undefined){state.week=+b.dataset.week;ui.note='';ui.confirm=null;save();renderAll();syncSetup();return;}
+  if(b.dataset.day){curWeek().active=b.dataset.day;ui.note='';save();renderDays();renderEditor();return;}
   const act=b.dataset.act;
   const cardEl=b.closest('[data-ex]');
   switch(act){
@@ -650,39 +682,49 @@ document.addEventListener('click',ev=>{
       break;
     }
     case 'addday':{
-      if(state.days.length>=7)return;
-      const nd={id:uid(),name:'Dia '+String.fromCharCode(65+state.days.length),freq:1,ex:[]};
-      state.days.push(nd);state.active=nd.id;
+      const w=curWeek();
+      if(w.days.length>=7)return;
+      const nd={id:uid(),name:'Dia '+String.fromCharCode(65+w.days.length),freq:1,ex:[]};
+      w.days.push(nd);w.active=nd.id;
       setSplitCustom();touch();renderDays();renderEditor();updateDerived();
       break;
     }
     case 'rmday':
       arm(b,'Confirmar',()=>{
-        if(state.days.length<2)return;
-        const i=state.days.findIndex(x=>x.id===state.active);
-        state.days.splice(i,1);
-        state.active=state.days[Math.max(0,i-1)].id;
+        const w=curWeek();
+        if(w.days.length<2)return;
+        const i=w.days.findIndex(x=>x.id===w.active);
+        w.days.splice(i,1);
+        w.active=w.days[Math.max(0,i-1)].id;
         setSplitCustom();touch();renderDays();renderEditor();updateDerived();
       });
       break;
     case 'ladder':
-      arm(b,'Confirmar: sobrescreve S2 a Remediação',()=>{
-        state.days.forEach(d=>d.ex.forEach(ladder));
-        ui.note='Escada gerada a partir da Semana 1.';
-        touch();renderAll();
+      arm(b,'Confirmar: refaz as semanas 2 a 4',()=>{
+        const base=state.weeks[0];
+        for(let i=1;i<4;i++)state.weeks[i]=mkWeek(ladderDays(base.days,i),base.split);
+        ui.note='Escada gerada a partir da Semana 1: as semanas 2 a 4 foram refeitas.';
+        touch();renderAll();syncSetup();
       });
       break;
     case 'resetweek':
-      arm(b,'Confirmar reset',()=>{
+      arm(b,'Confirmar: substitui esta semana',()=>{
         const wk=state.week;
-        state.days.forEach(d=>d.ex.forEach(e=>{e.w[wk]=Object.assign({},e.w[0]);}));
-        ui.note=WEEKS[wk].name+' voltou à base da Semana 1.';
+        state.weeks[wk]=mkWeek(cloneDays(state.weeks[0].days),state.weeks[0].split);
+        ui.note=WEEKS[wk].name+' agora é uma cópia da Semana 1.';
+        touch();renderAll();syncSetup();
+      });
+      break;
+    case 'clearweek':
+      arm(b,'Confirmar: esvaziar semana',()=>{
+        curWeek().days.forEach(d=>{d.ex=[];});
+        ui.note=WEEKS[state.week].name+' esvaziada. Os outros dias e semanas continuam como estavam.';
         touch();renderAll();
       });
       break;
     case 'clear':
       arm(b,'Confirmar: apagar exercícios',()=>{
-        state.days.forEach(d=>{d.ex=[];});
+        state.weeks.forEach(w=>w.days.forEach(d=>{d.ex=[];}));
         state.example=false;ui.note='Ficha esvaziada.';
         save();renderAll();
       });
@@ -718,7 +760,7 @@ const editor=$('#editor');
 editor.addEventListener('input',ev=>{
   const t=ev.target;const cardEl=t.closest('[data-ex]');if(!cardEl)return;
   const e=findEx(cardEl.dataset.ex);if(!e)return;
-  if(t.dataset.w)e.w[state.week][t.dataset.w]=t.value;
+  if(t.dataset.w)e[t.dataset.w]=t.value;
   else if(t.dataset.f==='name')e.name=t.value;
   else if(t.dataset.f==='extra')e.extra=t.value;
   else return;
@@ -729,7 +771,7 @@ editor.addEventListener('change',ev=>{
   const e=findEx(cardEl.dataset.ex);if(!e)return;
   const f=t.dataset.f;
   if(f==='muscle'||f==='type'){
-    /* Se o secundário ainda era a sugestão automática, acompanha a nova escolha */
+    /* Se o indireto 1 ainda era a sugestão automática, acompanha a nova escolha */
     const old=defSec(e.type,e.muscle);
     e[f]=t.value;
     if(e.sec===old)e.sec=defSec(e.type,e.muscle);
